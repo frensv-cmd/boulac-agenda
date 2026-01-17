@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Boulac Agenda - Reserveringen</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://apis.google.com/js/api.js"></script>
+  <script src="https://accounts.google.com/gsi/client"></script>
+  <script type="module">
+    // Firebase imports
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, query, orderBy, limit, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-firestore.js";
+    
+    const firebaseConfig = {
+      apiKey: "AIzaSyAt0iAZtsQCskIyjxSmPJ6nSms_HuNTDE0",
+      authDomain: "boulac-agenda-d42fe.firebaseapp.com",
+      projectId: "boulac-agenda-d42fe",
+      storageBucket: "boulac-agenda-d42fe.firebasestorage.app",
+      messagingSenderId: "1021360523746",
+      appId: "1:1021360523746:web:099f0597a6de5ab97f11bb"
+    };
+    
+    const firebaseApp = initializeApp(firebaseConfig);
+    const db = getFirestore(firebaseApp);
+    
+    // Make Firebase functions available globally
+    window.firebaseDB = db;
+    window.firebaseCollection = collection;
+    window.firebaseAddDoc = addDoc;
+    window.firebaseQuery = query;
+    window.firebaseOrderBy = orderBy;
+    window.firebaseLimit = limit;
+    window.firebaseOnSnapshot = onSnapshot;
+    window.firebaseServerTimestamp = serverTimestamp;
+    window.firebaseReady = true;
+  </script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .loader { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+  <div id="app" class="p-4">
+    <!-- Loading state -->
+    <div id="loading-screen" class="flex items-center justify-center min-h-screen">
+      <div class="text-center">
+        <div class="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full loader mx-auto mb-4"></div>
+        <p class="text-slate-600">App laden...</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ============================================
+    // CONFIGURATIE - Jouw gegevens
+    // ============================================
+    const CONFIG = {
+      CLIENT_ID: '280917590451-g1dppu120kpn4ie8alcjin73v0kds77p.apps.googleusercontent.com',
+      API_KEY: 'AIzaSyB73M-f7-3O8Xjw39s_b1V2Ttq4Qg6iylw',
+      CALENDAR_ID: '795c4dh1sb2opinr9hc65j28r4@group.calendar.google.com',
+      SCOPES: 'https://www.googleapis.com/auth/calendar',
+      DISCOVERY_DOC: 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest',
+    };
+
+    // ============================================
+    // BROERS CONFIGURATIE
+    // ============================================
+    const BROERS = {
+      anne: { naam: 'Anne', kleur: 'bg-blue-500', kleurLicht: 'bg-blue-100', border: 'border-blue-500', text: 'text-blue-700' },
+      bramjellie: { naam: 'Bram & Jellie', kleur: 'bg-emerald-500', kleurLicht: 'bg-emerald-100', border: 'border-emerald-500', text: 'text-emerald-700' },
+      frens: { naam: 'Frens', kleur: 'bg-amber-500', kleurLicht: 'bg-amber-100', border: 'border-amber-500', text: 'text-amber-700' },
+      aaldert: { naam: 'Aaldert', kleur: 'bg-purple-500', kleurLicht: 'bg-purple-100', border: 'border-purple-500', text: 'text-purple-700' }
+    };
+
+    const MAANDEN = ['Januari', 'Februari', 'Maart', 'April', 'Mei', 'Juni', 'Juli', 'Augustus', 'September', 'Oktober', 'November', 'December'];
+    const DAGEN = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
+
+    // ============================================
+    // APP STATE
+    // ============================================
+    let state = {
+      isSignedIn: false,
+      isLoading: false,
+      currentDate: new Date(),
+      reserveringen: [],
+      geselecteerdeDagen: [],
+      error: null,
+      success: null,
+      toonModal: false,
+      toonChat: false,
+      chatBerichten: [],
+      chatNaam: null,
+      huidigeGebruiker: null,
+      toonWijzigModal: false,
+      teWijzigenReservering: null,
+      toonVerwijderModal: false,
+      teVerwijderenReservering: null
+    };
+
+    let tokenClient = null;
+
+    // ============================================
+    // GOOGLE API INITIALISATIE
+    // ============================================
+    async function initializeGoogleAPI() {
+      try {
+        await new Promise((resolve) => gapi.load('client', resolve));
+        await gapi.client.init({
+          apiKey: CONFIG.API_KEY,
+          discoveryDocs: [CONFIG.DISCOVERY_DOC],
+        });
+
+        tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: CONFIG.CLIENT_ID,
+          scope: CONFIG.SCOPES,
+          callback: async (response) => {
+            if (response.error) {
+              showError('Inloggen mislukt: ' + response.error);
+              return;
+            }
+            // Sla token op voor volgende keer
+            localStorage.setItem('google_token', JSON.stringify(response));
+            localStorage.setItem('token_time', Date.now().toString());
+            
+            state.isSignedIn = true;
+            laadOpgeslagenChatNaam();
+            await laadReserveringen();
+            render();
+          },
+        });
+
+        // Check of er een opgeslagen token is
+        await herstelSessie();
+        
+        render();
+      } catch (error) {
+        console.error('Init error:', error);
+        showError('Kon Google API niet laden');
+      }
+    }
+
+    async function herstelSessie() {
+      const opgeslagenToken = localStorage.getItem('google_token');
+      const tokenTime = localStorage.getItem('token_time');
+      
+      if (opgeslagenToken && tokenTime) {
+        // Token is ~1 uur geldig, check of het niet te oud is (50 min)
+        const nu = Date.now();
+        const tokenLeeftijd = nu - parseInt(tokenTime);
+        const maxLeeftijd = 50 * 60 * 1000; // 50 minuten
+        
+        if (tokenLeeftijd < maxLeeftijd) {
+          try {
+            const token = JSON.parse(opgeslagenToken);
+            gapi.client.setToken(token);
+            
+            // Test of token nog werkt
+            await gapi.client.calendar.events.list({
+              calendarId: CONFIG.CALENDAR_ID,
+              maxResults: 1,
+            });
+            
+            state.isSignedIn = true;
+            laadOpgeslagenChatNaam();
+            await laadReserveringen();
+            return;
+          } catch (error) {
+            console.log('Opgeslagen token verlopen, opnieuw inloggen nodig');
+            localStorage.removeItem('google_token');
+            localStorage.removeItem('token_time');
+          }
+        } else {
+          // Token te oud
+          localStorage.removeItem('google_token');
+          localStorage.removeItem('token_time');
+        }
+      }
+    }
+
+    // ============================================
+    // AUTHENTICATIE
+    // ============================================
+    function signIn() {
+      tokenClient.requestAccessToken({ prompt: 'consent' });
+    }
+
+    function signOut() {
+      const token = gapi.client.getToken();
+      if (token) {
+        google.accounts.oauth2.revoke(token.access_token);
+        gapi.client.setToken(null);
+      }
+      // Verwijder opgeslagen token
+      localStorage.removeItem('google_token');
+      localStorage.removeItem('token_time');
+      
+      state.isSignedIn = false;
+      state.reserveringen = [];
+      render();
+    }
+
+    // ============================================
+    // GOOGLE CALENDAR FUNCTIES
+    // ============================================
+    async function laadReserveringen() {
+      state.isLoading = true;
+      render();
+
+      try {
+        const jaar = state.currentDate.getFullYear();
+        const maand = state.currentDate.getMonth();
+        const startDatum = new Date(jaar, maand - 1, 1);
+        const eindDatum = new Date(jaar, maand + 2, 0);
+
+        const response = await gapi.client.calendar.events.list({
+          calendarId: CONFIG.CALENDAR_ID,
+          timeMin: startDatum.toISOString(),
+          timeMax: eindDatum.toISOString(),
+          singleEvents: true,
+          orderBy: 'startTime',
+        });
+
+        const events = response.result.items || [];
+        state.reserveringen = events.map(event => googleEventNaarReservering(event));
+        state.error = null;
+      } catch (error) {
+        console.error('Laden mislukt:', error);
+        showError('Kon reserveringen niet laden');
+      }
+
+      state.isLoading = false;
+      render();
+    }
+
+    function googleEventNaarReservering(event) {
+      let broerKey = event.extendedProperties?.private?.broerKey;
+      
+      if (!broerKey) {
+        const titel = event.summary?.toLowerCase() || '';
+        if (titel.includes('anne')) broerKey = 'anne';
+        else if (titel.includes('bram') || titel.includes('jellie')) broerKey = 'bramjellie';
+        else if (titel.includes('frens')) broerKey = 'frens';
+        else if (titel.includes('aaldert')) broerKey = 'aaldert';
+        else broerKey = 'anne';
+      }
+
+      const startDatum = event.start.date 
+        ? new Date(event.start.date + 'T00:00:00')
+        : new Date(event.start.dateTime);
+      
+      let eindDatum = event.end.date
+        ? new Date(event.end.date + 'T00:00:00')
+        : new Date(event.end.dateTime);
+      
+      if (event.end.date) {
+        eindDatum.setDate(eindDatum.getDate() - 1);
+      }
+
+      return {
+        id: event.id,
+        broer: broerKey,
+        start: startDatum,
+        eind: eindDatum,
+      };
+    }
+
+    async function maakReservering(broerKey) {
+      const [startDatum, eindDatum] = state.geselecteerdeDagen;
+      
+      state.isLoading = true;
+      render();
+
+      try {
+        const eindDatumExclusief = new Date(eindDatum);
+        eindDatumExclusief.setDate(eindDatumExclusief.getDate() + 1);
+
+        const event = {
+          summary: `🏠 ${BROERS[broerKey].naam}`,
+          description: `Vakantiewoning gereserveerd door ${BROERS[broerKey].naam}`,
+          start: { date: formatDatumVoorGoogle(startDatum) },
+          end: { date: formatDatumVoorGoogle(eindDatumExclusief) },
+          extendedProperties: {
+            private: { broerKey: broerKey, appId: 'vakantiewoning-app' }
+          }
+        };
+
+        await gapi.client.calendar.events.insert({
+          calendarId: CONFIG.CALENDAR_ID,
+          resource: event,
+        });
+
+        showSuccess(`Reservering voor ${BROERS[broerKey].naam} aangemaakt!`);
+        state.geselecteerdeDagen = [];
+        state.toonModal = false;
+        await laadReserveringen();
+      } catch (error) {
+        console.error('Reservering mislukt:', error);
+        showError('Kon reservering niet maken');
+      }
+
+      state.isLoading = false;
+      render();
+    }
+
+    async function verwijderReservering(eventId) {
+      if (!confirm('Weet je zeker dat je deze reservering wilt verwijderen?')) return;
+
+      state.isLoading = true;
+      render();
+
+      try {
+        await gapi.client.calendar.events.delete({
+          calendarId: CONFIG.CALENDAR_ID,
+          eventId: eventId,
+        });
+
+        showSuccess('Reservering verwijderd');
+        await laadReserveringen();
+      } catch (error) {
+        console.error('Verwijderen mislukt:', error);
+        showError('Kon reservering niet verwijderen');
+      }
+
+      state.isLoading = false;
+      render();
+    }
+
+    // ============================================
+    // HELPER FUNCTIES
+    // ============================================
+    function formatDatumVoorGoogle(datum) {
+      const jaar = datum.getFullYear();
+      const maand = String(datum.getMonth() + 1).padStart(2, '0');
+      const dag = String(datum.getDate()).padStart(2, '0');
+      return `${jaar}-${maand}-${dag}`;
+    }
+
+    function formatDatum(datum) {
+      return `${datum.getDate()} ${MAANDEN[datum.getMonth()].substring(0, 3)}`;
+    }
+
+    function getDagenInMaand(jaar, maand) {
+      const eersteDag = new Date(jaar, maand, 1);
+      const laatsteDag = new Date(jaar, maand + 1, 0);
+      const dagen = [];
+      
+      let startDag = eersteDag.getDay() - 1;
+      if (startDag < 0) startDag = 6;
+      
+      for (let i = 0; i < startDag; i++) {
+        dagen.push(null);
+      }
+      
+      for (let dag = 1; dag <= laatsteDag.getDate(); dag++) {
+        dagen.push(new Date(jaar, maand, dag));
+      }
+      
+      return dagen;
+    }
+
+    function getReserveringVoorDag(datum) {
+      if (!datum) return null;
+      return state.reserveringen.find(r => {
+        const dagStart = new Date(datum);
+        dagStart.setHours(0, 0, 0, 0);
+        const resStart = new Date(r.start);
+        resStart.setHours(0, 0, 0, 0);
+        const resEind = new Date(r.eind);
+        resEind.setHours(23, 59, 59, 999);
+        return dagStart >= resStart && dagStart <= resEind;
+      });
+    }
+
+    function isGeselecteerd(datum) {
+      if (!datum) return false;
+      return state.geselecteerdeDagen.some(d => d.toDateString() === datum.toDateString());
+    }
+
+    function isVerleden(datum) {
+      if (!datum) return false;
+      const vandaag = new Date();
+      vandaag.setHours(0, 0, 0, 0);
+      return datum < vandaag;
+    }
+
+    function showError(msg) {
+      state.error = msg;
+      state.success = null;
+      render();
+      setTimeout(() => { state.error = null; render(); }, 5000);
+    }
+
+    function showSuccess(msg) {
+      state.success = msg;
+      state.error = null;
+      render();
+      setTimeout(() => { state.success = null; render(); }, 3000);
+    }
+
+    // ============================================
+    // EVENT HANDLERS
+    // ============================================
+    function handleDagKlik(datum) {
+      if (!datum || isVerleden(datum) || !state.isSignedIn) return;
+      
+      const reservering = getReserveringVoorDag(datum);
+      if (reservering) return;
+
+      if (state.geselecteerdeDagen.length === 0) {
+        state.geselecteerdeDagen = [datum];
+      } else if (state.geselecteerdeDagen.length === 1) {
+        const eerste = state.geselecteerdeDagen[0];
+        if (datum.toDateString() === eerste.toDateString()) {
+          state.geselecteerdeDagen = [];
+        } else {
+          const start = datum < eerste ? datum : eerste;
+          const eind = datum > eerste ? datum : eerste;
+          
+          const heeftConflict = state.reserveringen.some(r => {
+            const resStart = new Date(r.start);
+            const resEind = new Date(r.eind);
+            return (start <= resEind && eind >= resStart);
+          });
+          
+          if (heeftConflict) {
+            showError('⚠️ Er zit al een reservering in deze periode!');
+            state.geselecteerdeDagen = [];
+          } else {
+            state.geselecteerdeDagen = [start, eind];
+            openModal();
+          }
+        }
+      } else {
+        state.geselecteerdeDagen = [datum];
+      }
+      render();
+    }
+
+    function vorigeMaand() {
+      state.currentDate = new Date(state.currentDate.getFullYear(), state.currentDate.getMonth() - 1, 1);
+      laadReserveringen();
+    }
+
+    function volgendeMaand() {
+      state.currentDate = new Date(state.currentDate.getFullYear(), state.currentDate.getMonth() + 1, 1);
+      laadReserveringen();
+    }
+
+    function openModal() {
+      state.toonModal = true;
+      render();
+    }
+
+    function closeModal() {
+      state.toonModal = false;
+      state.geselecteerdeDagen = [];
+      render();
+    }
+
+    // ============================================
+    // WIJZIGEN & VERWIJDEREN FUNCTIES
+    // ============================================
+    function openWijzigModal(reserveringId) {
+      const reservering = state.reserveringen.find(r => r.id === reserveringId);
+      if (reservering) {
+        state.teWijzigenReservering = reservering;
+        state.toonWijzigModal = true;
+        render();
+      }
+    }
+
+    function closeWijzigModal() {
+      state.toonWijzigModal = false;
+      state.teWijzigenReservering = null;
+      render();
+    }
+
+    async function wijzigReserveringBroer(nieuweBroerKey) {
+      if (!state.teWijzigenReservering) return;
+      
+      state.isLoading = true;
+      render();
+
+      try {
+        const res = state.teWijzigenReservering;
+        const eindDatumExclusief = new Date(res.eind);
+        eindDatumExclusief.setDate(eindDatumExclusief.getDate() + 1);
+
+        const event = {
+          summary: `🏠 ${BROERS[nieuweBroerKey].naam}`,
+          description: `Vakantiewoning gereserveerd door ${BROERS[nieuweBroerKey].naam}`,
+          start: { date: formatDatumVoorGoogle(new Date(res.start)) },
+          end: { date: formatDatumVoorGoogle(eindDatumExclusief) },
+          extendedProperties: {
+            private: { broerKey: nieuweBroerKey, appId: 'vakantiewoning-app' }
+          }
+        };
+
+        await gapi.client.calendar.events.update({
+          calendarId: CONFIG.CALENDAR_ID,
+          eventId: res.id,
+          resource: event,
+        });
+
+        showSuccess(`Reservering gewijzigd naar ${BROERS[nieuweBroerKey].naam}!`);
+        closeWijzigModal();
+        await laadReserveringen();
+      } catch (error) {
+        console.error('Wijzigen mislukt:', error);
+        showError('Kon reservering niet wijzigen');
+      }
+
+      state.isLoading = false;
+      render();
+    }
+
+    function openVerwijderModal(reserveringId) {
+      const reservering = state.reserveringen.find(r => r.id === reserveringId);
+      if (reservering) {
+        state.teVerwijderenReservering = reservering;
+        state.toonVerwijderModal = true;
+        render();
+      }
+    }
+
+    function closeVerwijderModal() {
+      state.toonVerwijderModal = false;
+      state.teVerwijderenReservering = null;
+      render();
+    }
+
+    async function bevestigVerwijderen() {
+      if (!state.teVerwijderenReservering) return;
+
+      state.isLoading = true;
+      render();
+
+      try {
+        await gapi.client.calendar.events.delete({
+          calendarId: CONFIG.CALENDAR_ID,
+          eventId: state.teVerwijderenReservering.id,
+        });
+
+        showSuccess('Reservering verwijderd');
+        closeVerwijderModal();
+        await laadReserveringen();
+      } catch (error) {
+        console.error('Verwijderen mislukt:', error);
+        showError('Kon reservering niet verwijderen');
+      }
+
+      state.isLoading = false;
+      render();
+    }
+
+    // ============================================
+    // CHAT FUNCTIES
+    // ============================================
+    function openChat() {
+      state.toonChat = true;
+      render();
+      scrollChatNaarOnder();
+    }
+
+    function closeChat() {
+      state.toonChat = false;
+      render();
+    }
+
+    function kiesChatNaam(broerKey) {
+      state.chatNaam = broerKey;
+      state.huidigeGebruiker = BROERS[broerKey].naam;
+      localStorage.setItem('chatNaam', broerKey);
+      render();
+      startChatListener();
+    }
+
+    function startChatListener() {
+      if (!window.firebaseReady) {
+        setTimeout(startChatListener, 100);
+        return;
+      }
+      
+      const q = window.firebaseQuery(
+        window.firebaseCollection(window.firebaseDB, 'berichten'),
+        window.firebaseOrderBy('timestamp', 'asc'),
+        window.firebaseLimit(100)
+      );
+      
+      window.firebaseOnSnapshot(q, (snapshot) => {
+        state.chatBerichten = [];
+        snapshot.forEach((doc) => {
+          state.chatBerichten.push({ id: doc.id, ...doc.data() });
+        });
+        render();
+        scrollChatNaarOnder();
+      });
+    }
+
+    async function verstuurBericht() {
+      const input = document.getElementById('chat-input');
+      const tekst = input.value.trim();
+      
+      if (!tekst || !state.chatNaam) return;
+      
+      try {
+        await window.firebaseAddDoc(window.firebaseCollection(window.firebaseDB, 'berichten'), {
+          tekst: tekst,
+          afzender: state.chatNaam,
+          afzenderNaam: BROERS[state.chatNaam].naam,
+          timestamp: window.firebaseServerTimestamp()
+        });
+        input.value = '';
+      } catch (error) {
+        console.error('Bericht versturen mislukt:', error);
+        showError('Kon bericht niet versturen');
+      }
+    }
+
+    function handleChatKeyPress(event) {
+      if (event.key === 'Enter') {
+        verstuurBericht();
+      }
+    }
+
+    function scrollChatNaarOnder() {
+      setTimeout(() => {
+        const chatMessages = document.getElementById('chat-messages');
+        if (chatMessages) {
+          chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+      }, 100);
+    }
+
+    function formatChatTijd(timestamp) {
+      if (!timestamp) return '';
+      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+      return `${date.getDate()} ${MAANDEN[date.getMonth()].substring(0, 3)} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    }
+
+    // Check voor opgeslagen chatnaam bij opstarten
+    function laadOpgeslagenChatNaam() {
+      const opgeslagen = localStorage.getItem('chatNaam');
+      if (opgeslagen && BROERS[opgeslagen]) {
+        state.chatNaam = opgeslagen;
+        state.huidigeGebruiker = BROERS[opgeslagen].naam;
+        startChatListener();
+      }
+    }
+
+    // ============================================
+    // RENDER FUNCTIES
+    // ============================================
+    function render() {
+      const app = document.getElementById('app');
+      
+      if (!state.isSignedIn) {
+        app.innerHTML = renderLoginScreen();
+      } else {
+        app.innerHTML = renderMainApp();
+      }
+    }
+
+    function renderLoginScreen() {
+      return `
+        <div class="flex items-center justify-center min-h-screen">
+          <div class="max-w-sm w-full">
+            <div class="bg-white rounded-2xl shadow-lg p-8 text-center">
+              <div class="w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+                </svg>
+              </div>
+              <h1 class="text-2xl font-bold text-slate-800 mb-2">Boulac Agenda</h1>
+              <p class="text-slate-500 mb-6">Familie Reserveringen</p>
+              
+              <button onclick="signIn()" class="w-full py-3 px-4 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-xl transition-colors flex items-center justify-center gap-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"></path>
+                </svg>
+                Inloggen met Google
+              </button>
+              
+              ${state.error ? `<div class="mt-4 p-3 bg-red-50 border border-red-200 rounded-xl"><p class="text-sm text-red-700">${state.error}</p></div>` : ''}
+              
+              <p class="text-xs text-slate-400 mt-6">Log in om de gedeelde agenda te bekijken</p>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderMainApp() {
+      const jaar = state.currentDate.getFullYear();
+      const maand = state.currentDate.getMonth();
+      const dagen = getDagenInMaand(jaar, maand);
+
+      return `
+        <div class="max-w-lg mx-auto">
+          <!-- Header -->
+          <div class="bg-white rounded-2xl shadow-sm p-4 mb-4">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center">
+                  <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+                  </svg>
+                </div>
+                <div>
+                  <h1 class="text-xl font-bold text-slate-800">Boulac Agenda</h1>
+                  <p class="text-slate-500 text-sm flex items-center gap-1">
+                    <span class="w-2 h-2 bg-green-500 rounded-full"></span>
+                    Verbonden met Google
+                  </p>
+                </div>
+              </div>
+              <div class="flex gap-2">
+                <button onclick="openChat()" class="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center hover:bg-blue-200 transition-colors" title="Chat">
+                  <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                  </svg>
+                </button>
+                <button onclick="laadReserveringen()" class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center hover:bg-slate-200 transition-colors" title="Ververs">
+                  <svg class="w-5 h-5 text-slate-600 ${state.isLoading ? 'loader' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                  </svg>
+                </button>
+                <button onclick="signOut()" class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center hover:bg-slate-200 transition-colors" title="Uitloggen">
+                  <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Messages -->
+          ${state.success ? `
+            <div class="bg-green-50 border border-green-200 rounded-xl p-3 mb-4 flex items-center gap-2">
+              <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+              </svg>
+              <p class="text-sm text-green-700 font-medium">${state.success}</p>
+            </div>
+          ` : ''}
+          
+          ${state.error ? `
+            <div class="bg-red-50 border border-red-200 rounded-xl p-3 mb-4 flex items-center gap-2">
+              <svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              <p class="text-sm text-red-700 font-medium">${state.error}</p>
+            </div>
+          ` : ''}
+
+          <!-- Calendar -->
+          <div class="bg-white rounded-2xl shadow-sm p-4 mb-4">
+            <div class="flex items-center justify-between mb-4">
+              <button onclick="vorigeMaand()" class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center hover:bg-slate-200 transition-colors">
+                <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                </svg>
+              </button>
+              <h2 class="text-lg font-semibold text-slate-800">${MAANDEN[maand]} ${jaar}</h2>
+              <button onclick="volgendeMaand()" class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center hover:bg-slate-200 transition-colors">
+                <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                </svg>
+              </button>
+            </div>
+
+            <div class="grid grid-cols-7 gap-1 mb-2">
+              ${DAGEN.map(dag => `<div class="text-center text-xs font-medium text-slate-400 py-2">${dag}</div>`).join('')}
+            </div>
+
+            <div class="grid grid-cols-7 gap-1">
+              ${dagen.map((datum, index) => {
+                if (!datum) return '<div class="aspect-square"></div>';
+                
+                const reservering = getReserveringVoorDag(datum);
+                const geselecteerd = isGeselecteerd(datum);
+                const verleden = isVerleden(datum);
+                const broerInfo = reservering ? BROERS[reservering.broer] : null;
+                
+                let classes = 'aspect-square rounded-xl text-sm font-medium transition-all flex items-center justify-center cursor-pointer ';
+                
+                if (verleden) {
+                  classes += 'text-slate-300 cursor-not-allowed ';
+                } else if (geselecteerd) {
+                  classes += 'bg-blue-500 text-white ring-2 ring-blue-300 ';
+                } else if (reservering) {
+                  classes += `${broerInfo.kleurLicht} ${broerInfo.text} cursor-default `;
+                } else {
+                  classes += 'hover:bg-slate-100 text-slate-700 ';
+                }
+                
+                return `<button onclick="handleDagKlik(new Date(${datum.getTime()}))" class="${classes}" ${verleden ? 'disabled' : ''}>${datum.getDate()}</button>`;
+              }).join('')}
+            </div>
+
+            <div class="mt-4 p-3 bg-slate-50 rounded-xl">
+              <p class="text-sm text-slate-600 text-center">
+                👆 Tik op een <strong>startdatum</strong> en dan op een <strong>einddatum</strong>
+              </p>
+            </div>
+          </div>
+
+          <!-- Legend -->
+          <div class="bg-white rounded-2xl shadow-sm p-4 mb-4">
+            <div class="flex items-center gap-2 mb-3">
+              <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path>
+              </svg>
+              <h3 class="font-semibold text-slate-700">Wie is wie</h3>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              ${Object.entries(BROERS).map(([key, broer]) => `
+                <div class="flex items-center gap-2">
+                  <div class="w-4 h-4 rounded-full ${broer.kleur}"></div>
+                  <span class="text-sm text-slate-600">${broer.naam}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- Reservations -->
+          <div class="bg-white rounded-2xl shadow-sm p-4">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-semibold text-slate-700">📅 Reserveringen</h3>
+              ${state.isLoading ? '<div class="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full loader"></div>' : ''}
+            </div>
+            
+            ${state.reserveringen.length === 0 ? `
+              <p class="text-sm text-slate-500 text-center py-4">Geen reserveringen gevonden</p>
+            ` : `
+              <div class="space-y-2">
+                ${(() => {
+                  const vandaag = new Date();
+                  vandaag.setHours(0, 0, 0, 0);
+                  const toekomstigeReserveringen = state.reserveringen
+                    .filter(res => new Date(res.eind) >= vandaag)
+                    .sort((a, b) => new Date(a.start) - new Date(b.start));
+                  
+                  if (toekomstigeReserveringen.length === 0) {
+                    return '<p class="text-sm text-slate-500 text-center py-4">Geen aankomende reserveringen</p>';
+                  }
+                  
+                  return toekomstigeReserveringen.map(res => {
+                    const broer = BROERS[res.broer] || BROERS.anne;
+                    return `
+                      <div class="flex items-center justify-between p-3 rounded-xl ${broer.kleurLicht} border-l-4 ${broer.border}">
+                        <div>
+                          <p class="font-medium ${broer.text}">${broer.naam}</p>
+                          <p class="text-sm text-slate-600">${formatDatum(new Date(res.start))} - ${formatDatum(new Date(res.eind))}</p>
+                        </div>
+                        <div class="flex gap-1">
+                          <button onclick="openWijzigModal('${res.id}')" class="px-2 py-1 text-xs bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
+                            Wijzig
+                          </button>
+                          <button onclick="openVerwijderModal('${res.id}')" class="px-2 py-1 text-xs bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors">
+                            Verwijder
+                          </button>
+                        </div>
+                      </div>
+                    `;
+                  }).join('');
+                })()}
+              </div>
+            `}
+          </div>
+        </div>
+
+        <!-- Modal -->
+        <div id="modal" class="${state.toonModal ? '' : 'hidden'} fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div class="bg-white rounded-2xl p-6 w-full max-w-sm">
+            <h3 class="text-lg font-bold text-slate-800 mb-2">Nieuwe Reservering</h3>
+            <p class="text-slate-600 mb-4">
+              ${state.geselecteerdeDagen.length === 2 ? `${formatDatum(state.geselecteerdeDagen[0])} - ${formatDatum(state.geselecteerdeDagen[1])}` : ''}
+            </p>
+            
+            <p class="text-sm font-medium text-slate-700 mb-2">Wie boekt?</p>
+            <div class="grid grid-cols-2 gap-2 mb-4">
+              ${Object.entries(BROERS).map(([key, broer]) => `
+                <button onclick="maakReservering('${key}')" class="p-3 rounded-xl border-2 border-slate-200 hover:${broer.kleurLicht} hover:${broer.border} transition-all text-left">
+                  <div class="flex items-center gap-2">
+                    <div class="w-3 h-3 rounded-full ${broer.kleur}"></div>
+                    <span class="text-sm font-medium text-slate-700">${broer.naam}</span>
+                  </div>
+                </button>
+              `).join('')}
+            </div>
+            
+            <button onclick="closeModal()" class="w-full py-3 rounded-xl bg-slate-100 text-slate-700 font-medium hover:bg-slate-200 transition-colors">
+              Annuleren
+            </button>
+          </div>
+        </div>
+
+        <!-- Chat Panel -->
+        <div id="chat-panel" class="${state.toonChat ? '' : 'hidden'} fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div class="bg-white rounded-2xl w-full max-w-md h-[80vh] flex flex-col">
+            <!-- Chat Header -->
+            <div class="p-4 border-b flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                  <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="font-bold text-slate-800">Familie Chat</h3>
+                  ${state.chatNaam ? `<p class="text-sm text-slate-500">Ingelogd als ${BROERS[state.chatNaam].naam}</p>` : ''}
+                </div>
+              </div>
+              <button onclick="closeChat()" class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center hover:bg-slate-200">
+                <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+              </button>
+            </div>
+            
+            ${!state.chatNaam ? `
+              <!-- Kies naam -->
+              <div class="flex-1 p-4 flex flex-col items-center justify-center">
+                <p class="text-slate-600 mb-4">Wie ben jij?</p>
+                <div class="grid grid-cols-2 gap-2 w-full max-w-xs">
+                  ${Object.entries(BROERS).map(([key, broer]) => `
+                    <button onclick="kiesChatNaam('${key}')" class="p-4 rounded-xl border-2 border-slate-200 hover:${broer.kleurLicht} hover:${broer.border} transition-all">
+                      <div class="flex items-center gap-2 justify-center">
+                        <div class="w-4 h-4 rounded-full ${broer.kleur}"></div>
+                        <span class="font-medium text-slate-700">${broer.naam}</span>
+                      </div>
+                    </button>
+                  `).join('')}
+                </div>
+              </div>
+            ` : `
+              <!-- Berichten -->
+              <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3">
+                ${state.chatBerichten.length === 0 ? `
+                  <p class="text-center text-slate-400 mt-8">Nog geen berichten. Start het gesprek!</p>
+                ` : state.chatBerichten.map(bericht => {
+                  const isEigen = bericht.afzender === state.chatNaam;
+                  const broer = BROERS[bericht.afzender] || BROERS.anne;
+                  return `
+                    <div class="flex ${isEigen ? 'justify-end' : 'justify-start'}">
+                      <div class="max-w-[80%] ${isEigen ? broer.kleur + ' text-white' : 'bg-slate-100 text-slate-800'} rounded-2xl px-4 py-2">
+                        ${!isEigen ? `<p class="text-xs font-medium ${broer.text} mb-1">${bericht.afzenderNaam}</p>` : ''}
+                        <p>${bericht.tekst}</p>
+                        <p class="text-xs ${isEigen ? 'text-white/70' : 'text-slate-400'} mt-1">${formatChatTijd(bericht.timestamp)}</p>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+              
+              <!-- Input -->
+              <div class="p-4 border-t">
+                <div class="flex gap-2">
+                  <input
+                    type="text"
+                    id="chat-input"
+                    onkeypress="handleChatKeyPress(event)"
+                    placeholder="Typ een bericht..."
+                    class="flex-1 px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                  <button onclick="verstuurBericht()" class="px-4 py-3 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            `}
+          </div>
+        </div>
+
+        <!-- Wijzig Modal -->
+        <div class="${state.toonWijzigModal ? '' : 'hidden'} fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div class="bg-white rounded-2xl p-6 w-full max-w-sm">
+            <h3 class="text-xl font-bold text-slate-800 mb-2">📝 Reservering Wijzigen</h3>
+            ${state.teWijzigenReservering ? `
+              <div class="bg-slate-50 rounded-xl p-4 mb-4">
+                <p class="text-slate-600">Huidige boeking:</p>
+                <p class="font-bold text-lg text-slate-800">${BROERS[state.teWijzigenReservering.broer]?.naam || 'Onbekend'}</p>
+                <p class="text-slate-600">${formatDatum(new Date(state.teWijzigenReservering.start))} - ${formatDatum(new Date(state.teWijzigenReservering.eind))}</p>
+              </div>
+              
+              <p class="text-lg font-medium text-slate-700 mb-3">Wie moet hier staan?</p>
+              <div class="grid grid-cols-1 gap-2 mb-4">
+                ${Object.entries(BROERS).map(([key, broer]) => `
+                  <button onclick="wijzigReserveringBroer('${key}')" class="p-4 rounded-xl border-2 ${state.teWijzigenReservering.broer === key ? broer.border + ' ' + broer.kleurLicht : 'border-slate-200 hover:border-slate-300'} transition-all">
+                    <div class="flex items-center gap-3">
+                      <div class="w-5 h-5 rounded-full ${broer.kleur}"></div>
+                      <span class="text-lg font-medium text-slate-700">${broer.naam}</span>
+                      ${state.teWijzigenReservering.broer === key ? '<span class="ml-auto text-sm text-slate-500">(nu)</span>' : ''}
+                    </div>
+                  </button>
+                `).join('')}
+              </div>
+            ` : ''}
+            
+            <button onclick="closeWijzigModal()" class="w-full py-4 rounded-xl bg-slate-200 text-slate-700 font-bold text-lg hover:bg-slate-300 transition-colors">
+              Annuleren
+            </button>
+          </div>
+        </div>
+
+        <!-- Verwijder Bevestiging Modal -->
+        <div class="${state.toonVerwijderModal ? '' : 'hidden'} fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div class="bg-white rounded-2xl p-6 w-full max-w-sm">
+            <div class="text-center mb-6">
+              <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                </svg>
+              </div>
+              <h3 class="text-xl font-bold text-slate-800 mb-2">Reservering Verwijderen?</h3>
+              ${state.teVerwijderenReservering ? `
+                <div class="bg-slate-50 rounded-xl p-4 mb-2">
+                  <p class="font-bold text-lg ${BROERS[state.teVerwijderenReservering.broer]?.text || 'text-slate-800'}">${BROERS[state.teVerwijderenReservering.broer]?.naam || 'Onbekend'}</p>
+                  <p class="text-slate-600">${formatDatum(new Date(state.teVerwijderenReservering.start))} - ${formatDatum(new Date(state.teVerwijderenReservering.eind))}</p>
+                </div>
+              ` : ''}
+              <p class="text-slate-500">Dit kan niet ongedaan worden gemaakt!</p>
+            </div>
+            
+            <div class="flex flex-col gap-3">
+              <button onclick="bevestigVerwijderen()" class="w-full py-4 rounded-xl bg-red-500 text-white font-bold text-lg hover:bg-red-600 transition-colors flex items-center justify-center gap-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                </svg>
+                Ja, Verwijderen
+              </button>
+              <button onclick="closeVerwijderModal()" class="w-full py-4 rounded-xl bg-slate-200 text-slate-700 font-bold text-lg hover:bg-slate-300 transition-colors">
+                Nee, Terug
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // ============================================
+    // START APP
+    // ============================================
+    window.onload = initializeGoogleAPI;
+  </script>
+</body>
+</html>
