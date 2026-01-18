@@ -399,10 +399,6 @@
     }
 
     async function maakReservering(broerKey) {
-      console.log('=== maakReservering ===');
-      console.log('broerKey:', broerKey);
-      console.log('geselecteerdeDagen:', state.geselecteerdeDagen);
-      
       if (!broerKey || broerKey === 'null' || broerKey === 'undefined') {
         showError('Kon niet bepalen wie je bent. Log opnieuw in.');
         state.toonModal = false;
@@ -441,20 +437,11 @@
           }
         };
 
-        // Voeg de ingelogde gebruiker toe als attendee voor bevestigingsmail
-        if (state.huidigeEmail) {
-          event.attendees = [{ email: state.huidigeEmail }];
-        }
-
-        console.log('Event:', event);
-
         await gapi.client.calendar.events.insert({
           calendarId: CONFIG.CALENDAR_ID,
-          resource: event,
-          sendUpdates: 'all'
+          resource: event
         });
 
-        console.log('Reservering succesvol!');
         showSuccess(`Reservering voor ${BROERS[broerKey].naam} aangemaakt!`);
         state.geselecteerdeDagen = [];
         state.reserveringOmschrijving = '';
@@ -462,7 +449,7 @@
         await laadReserveringen();
       } catch (error) {
         console.error('Reservering mislukt:', error);
-        showError('Kon reservering niet maken: ' + error.message);
+        showError('Kon reservering niet maken');
         state.toonModal = false;
       }
 
