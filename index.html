@@ -291,7 +291,7 @@
         const jaar = state.currentDate.getFullYear();
         const maand = state.currentDate.getMonth();
         const startDatum = new Date(jaar, maand - 1, 1);
-        const eindDatum = new Date(jaar, maand + 2, 0);
+        const eindDatum = new Date(jaar, maand + 4, 0); // 3 maanden vooruit
 
         const response = await gapi.client.calendar.events.list({
           calendarId: CONFIG.CALENDAR_ID,
