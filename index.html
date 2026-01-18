@@ -64,7 +64,7 @@
       CLIENT_ID: '280917590451-g1dppu120kpn4ie8alcjin73v0kds77p.apps.googleusercontent.com',
       API_KEY: 'AIzaSyB73M-f7-3O8Xjw39s_b1V2Ttq4Qg6iylw',
       CALENDAR_ID: '795c4dh1sb2opinr9hc65j28r4@group.calendar.google.com',
-      SCOPES: 'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/userinfo.profile',
+      SCOPES: 'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
       DISCOVERY_DOC: 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest',
     };
 
@@ -77,11 +77,21 @@
     // BROERS CONFIGURATIE
     // ============================================
     const BROERS = {
-      anne: { naam: 'Anne', kleur: 'bg-blue-500', kleurLicht: 'bg-blue-100', border: 'border-blue-500', text: 'text-blue-700' },
-      bramjellie: { naam: 'Bram & Jellie', kleur: 'bg-emerald-500', kleurLicht: 'bg-emerald-100', border: 'border-emerald-500', text: 'text-emerald-700' },
-      frens: { naam: 'Frens', kleur: 'bg-amber-500', kleurLicht: 'bg-amber-100', border: 'border-amber-500', text: 'text-amber-700' },
-      aaldert: { naam: 'Aaldert', kleur: 'bg-purple-500', kleurLicht: 'bg-purple-100', border: 'border-purple-500', text: 'text-purple-700' }
+      anne: { naam: 'Anne', email: 'annevries7@gmail.com', kleur: 'bg-blue-500', kleurLicht: 'bg-blue-100', border: 'border-blue-500', text: 'text-blue-700' },
+      bramjellie: { naam: 'Bram & Jellie', email: 'bramzvries@gmail.com', kleur: 'bg-emerald-500', kleurLicht: 'bg-emerald-100', border: 'border-emerald-500', text: 'text-emerald-700' },
+      frens: { naam: 'Frens', email: 'frensv@gmail.com', kleur: 'bg-amber-500', kleurLicht: 'bg-amber-100', border: 'border-amber-500', text: 'text-amber-700' },
+      aaldert: { naam: 'Aaldert', email: 'aaldertvries@gmail.com', kleur: 'bg-purple-500', kleurLicht: 'bg-purple-100', border: 'border-purple-500', text: 'text-purple-700' }
     };
+
+    // Whitelist van toegestane e-mailadressen
+    const TOEGESTANE_EMAILS = Object.values(BROERS).map(b => b.email.toLowerCase());
+
+    // Vind broer op basis van e-mailadres
+    function getBroerByEmail(email) {
+      if (!email) return null;
+      const emailLower = email.toLowerCase();
+      return Object.entries(BROERS).find(([key, broer]) => broer.email.toLowerCase() === emailLower);
+    }
 
     const MAANDEN = ['Januari', 'Februari', 'Maart', 'April', 'Mei', 'Juni', 'Juli', 'Augustus', 'September', 'Oktober', 'November', 'December'];
     const DAGEN = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo'];
@@ -103,6 +113,8 @@
       chatNaam: null,
       huidigeGebruiker: null,
       huidigeProfielfoto: null,
+      huidigeEmail: null,
+      ingelogdeBroer: null,
       profielfotoos: {},
       toonWijzigModal: false,
       teWijzigenReservering: null,
@@ -136,8 +148,22 @@
             localStorage.setItem('google_token', JSON.stringify(response));
             localStorage.setItem('token_time', Date.now().toString());
             
-            state.isSignedIn = true;
+            // Haal profielinfo op en check of e-mail is toegestaan
             await haalProfielfotoOp();
+            
+            if (!TOEGESTANE_EMAILS.includes(state.huidigeEmail?.toLowerCase())) {
+              showError('⛔ Alleen familieleden kunnen deze app gebruiken');
+              signOut();
+              return;
+            }
+            
+            // Bepaal welke broer is ingelogd
+            const broerMatch = getBroerByEmail(state.huidigeEmail);
+            if (broerMatch) {
+              state.ingelogdeBroer = broerMatch[0]; // de key (anne, frens, etc.)
+            }
+            
+            state.isSignedIn = true;
             laadOpgeslagenChatNaam();
             await laadReserveringen();
             await laadProfielfotoos();
@@ -178,6 +204,21 @@
             
             state.isSignedIn = true;
             await haalProfielfotoOp();
+            
+            // Check of e-mail is toegestaan
+            if (!TOEGESTANE_EMAILS.includes(state.huidigeEmail?.toLowerCase())) {
+              state.isSignedIn = false;
+              showError('⛔ Alleen familieleden kunnen deze app gebruiken');
+              signOut();
+              return;
+            }
+            
+            // Bepaal welke broer is ingelogd
+            const broerMatch = getBroerByEmail(state.huidigeEmail);
+            if (broerMatch) {
+              state.ingelogdeBroer = broerMatch[0];
+            }
+            
             laadOpgeslagenChatNaam();
             await laadReserveringen();
             await laadProfielfotoos();
@@ -210,14 +251,20 @@
         if (response.ok) {
           const data = await response.json();
           state.huidigeProfielfoto = data.picture;
+          state.huidigeEmail = data.email;
           localStorage.setItem('profielfoto', data.picture);
+          localStorage.setItem('email', data.email);
         }
       } catch (error) {
-        console.log('Kon profielfoto niet ophalen:', error);
-        // Probeer opgeslagen foto
+        console.log('Kon profielinfo niet ophalen:', error);
+        // Probeer opgeslagen data
         const opgeslagen = localStorage.getItem('profielfoto');
+        const opgeslagenEmail = localStorage.getItem('email');
         if (opgeslagen) {
           state.huidigeProfielfoto = opgeslagen;
+        }
+        if (opgeslagenEmail) {
+          state.huidigeEmail = opgeslagenEmail;
         }
       }
     }
@@ -271,13 +318,17 @@
         google.accounts.oauth2.revoke(token.access_token);
         gapi.client.setToken(null);
       }
-      // Verwijder opgeslagen token
+      // Verwijder opgeslagen token en profieldata
       localStorage.removeItem('google_token');
       localStorage.removeItem('token_time');
+      localStorage.removeItem('profielfoto');
+      localStorage.removeItem('email');
       
       state.isSignedIn = false;
       state.reserveringen = [];
       state.huidigeProfielfoto = null;
+      state.huidigeEmail = null;
+      state.ingelogdeBroer = null;
       render();
     }
 
@@ -379,9 +430,15 @@
           }
         };
 
+        // Voeg de ingelogde gebruiker toe als attendee voor bevestigingsmail
+        if (state.huidigeEmail) {
+          event.attendees = [{ email: state.huidigeEmail }];
+        }
+
         await gapi.client.calendar.events.insert({
           calendarId: CONFIG.CALENDAR_ID,
           resource: event,
+          sendUpdates: 'all'  // Stuurt bevestigingsmail naar attendees
         });
 
         showSuccess(`Reservering voor ${BROERS[broerKey].naam} aangemaakt!`);
@@ -1005,6 +1062,16 @@
               ${state.geselecteerdeDagen.length === 2 ? `${formatDatum(state.geselecteerdeDagen[0])} - ${formatDatum(state.geselecteerdeDagen[1])}` : ''}
             </p>
             
+            ${state.ingelogdeBroer ? `
+              <div class="flex items-center gap-3 p-3 rounded-xl ${BROERS[state.ingelogdeBroer].kleurLicht} mb-4">
+                ${renderProfielfotoOfKleur(state.ingelogdeBroer, 'w-10 h-10')}
+                <div>
+                  <p class="text-sm text-slate-500">Reserveren als</p>
+                  <p class="font-semibold ${BROERS[state.ingelogdeBroer].text}">${BROERS[state.ingelogdeBroer].naam}</p>
+                </div>
+              </div>
+            ` : ''}
+            
             <p class="text-sm font-medium text-slate-700 mb-2">Omschrijving (optioneel)</p>
             <input 
               type="text" 
@@ -1015,17 +1082,9 @@
               class="w-full px-4 py-3 rounded-xl border-2 border-slate-200 focus:border-blue-500 focus:outline-none mb-4 text-slate-700"
             />
             
-            <p class="text-sm font-medium text-slate-700 mb-2">Wie boekt?</p>
-            <div class="grid grid-cols-2 gap-2 mb-4">
-              ${Object.entries(BROERS).map(([key, broer]) => `
-                <button onclick="maakReservering('${key}')" class="p-3 rounded-xl border-2 border-slate-200 hover:${broer.kleurLicht} hover:${broer.border} transition-all text-left">
-                  <div class="flex items-center gap-2">
-                    ${renderProfielfotoOfKleur(key, 'w-6 h-6')}
-                    <span class="text-sm font-medium text-slate-700">${broer.naam}</span>
-                  </div>
-                </button>
-              `).join('')}
-            </div>
+            <button onclick="maakReservering('${state.ingelogdeBroer}')" class="w-full py-3 rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors mb-2">
+              ✓ Reservering Bevestigen
+            </button>
             
             <button onclick="closeModal()" class="w-full py-3 rounded-xl bg-slate-100 text-slate-700 font-medium hover:bg-slate-200 transition-colors">
               Annuleren
