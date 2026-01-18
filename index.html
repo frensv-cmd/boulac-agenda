@@ -497,36 +497,61 @@
     // EVENT HANDLERS
     // ============================================
     function handleDagKlik(datum) {
-      if (!datum || isVerleden(datum) || !state.isSignedIn) return;
+      console.log('=== handleDagKlik ===');
+      console.log('datum:', datum);
+      console.log('isVerleden:', isVerleden(datum));
+      console.log('isSignedIn:', state.isSignedIn);
+      console.log('geselecteerdeDagen.length:', state.geselecteerdeDagen.length);
+      
+      if (!datum || isVerleden(datum) || !state.isSignedIn) {
+        console.log('Early return: datum/verleden/signedIn check failed');
+        return;
+      }
       
       const reservering = getReserveringVoorDag(datum);
-      if (reservering) return;
+      console.log('reservering voor dag:', reservering);
+      if (reservering) {
+        console.log('Early return: dag is al gereserveerd');
+        return;
+      }
 
       if (state.geselecteerdeDagen.length === 0) {
+        console.log('Eerste dag selecteren');
         state.geselecteerdeDagen = [datum];
       } else if (state.geselecteerdeDagen.length === 1) {
         const eerste = state.geselecteerdeDagen[0];
+        console.log('Tweede dag selecteren, eerste was:', eerste);
         if (datum.toDateString() === eerste.toDateString()) {
+          console.log('Zelfde dag geklikt, deselecteren');
           state.geselecteerdeDagen = [];
         } else {
           const start = datum < eerste ? datum : eerste;
           const eind = datum > eerste ? datum : eerste;
+          console.log('Periode:', start, 'tot', eind);
           
           const heeftConflict = state.reserveringen.some(r => {
             const resStart = new Date(r.start);
             const resEind = new Date(r.eind);
-            return (start <= resEind && eind >= resStart);
+            const conflict = (start <= resEind && eind >= resStart);
+            if (conflict) {
+              console.log('Conflict gevonden met:', r);
+            }
+            return conflict;
           });
+          
+          console.log('heeftConflict:', heeftConflict);
           
           if (heeftConflict) {
             showError('⚠️ Er zit al een reservering in deze periode!');
             state.geselecteerdeDagen = [];
           } else {
             state.geselecteerdeDagen = [start, eind];
+            console.log('Modal openen!');
             openModal();
           }
         }
       } else {
+        console.log('Reset naar eerste dag (length was > 1)');
         state.geselecteerdeDagen = [datum];
       }
       render();
