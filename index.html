@@ -64,7 +64,7 @@
       CLIENT_ID: '280917590451-g1dppu120kpn4ie8alcjin73v0kds77p.apps.googleusercontent.com',
       API_KEY: 'AIzaSyB73M-f7-3O8Xjw39s_b1V2Ttq4Qg6iylw',
       CALENDAR_ID: '795c4dh1sb2opinr9hc65j28r4@group.calendar.google.com',
-      SCOPES: 'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
+      SCOPES: 'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/contacts.readonly',
       DISCOVERY_DOC: 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest',
     };
 
@@ -239,15 +239,40 @@
         const token = gapi.client.getToken();
         if (!token) return;
         
+        // Probeer eerst de Google People API (betrouwbaarder)
+        try {
+          const response = await fetch('https://www.googleapis.com/peopleapi/v1/people/me?personFields=photos,names,emailAddresses', {
+            headers: { 'Authorization': `Bearer ${token.access_token}` }
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            if (data.photos && data.photos.length > 0) {
+              state.huidigeProfielfoto = data.photos[0].url;
+              localStorage.setItem('profielfoto', data.photos[0].url);
+            }
+            if (data.emailAddresses && data.emailAddresses.length > 0) {
+              state.huidigeEmail = data.emailAddresses[0].value;
+              localStorage.setItem('email', data.emailAddresses[0].value);
+            }
+            return; // Succesvol
+          }
+        } catch (e) {
+          console.log('People API fallback...');
+        }
+        
+        // Fallback: gebruik v2 userinfo
         const response = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
           headers: { 'Authorization': `Bearer ${token.access_token}` }
         });
         
         if (response.ok) {
           const data = await response.json();
-          state.huidigeProfielfoto = data.picture;
+          if (data.picture) {
+            state.huidigeProfielfoto = data.picture;
+            localStorage.setItem('profielfoto', data.picture);
+          }
           state.huidigeEmail = data.email;
-          localStorage.setItem('profielfoto', data.picture);
           localStorage.setItem('email', data.email);
         }
       } catch (error) {
