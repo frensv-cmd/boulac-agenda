@@ -77,10 +77,11 @@
     // BROERS CONFIGURATIE
     // ============================================
     const BROERS = {
-      anne: { naam: 'Anne', email: 'annevries7@gmail.com', kleur: 'bg-blue-500', kleurLicht: 'bg-blue-100', border: 'border-blue-500', text: 'text-blue-700' },
-      bramjellie: { naam: 'Bram & Jellie', email: 'bramzvries@gmail.com', kleur: 'bg-emerald-500', kleurLicht: 'bg-emerald-100', border: 'border-emerald-500', text: 'text-emerald-700' },
-      frens: { naam: 'Frens', email: 'frensv@gmail.com', kleur: 'bg-amber-500', kleurLicht: 'bg-amber-100', border: 'border-amber-500', text: 'text-amber-700' },
-      aaldert: { naam: 'Aaldert', email: 'aaldertvries@gmail.com', kleur: 'bg-purple-500', kleurLicht: 'bg-purple-100', border: 'border-purple-500', text: 'text-purple-700' }
+      anne: { naam: 'Anne', email: 'annevries7@gmail.com', kleur: 'bg-blue-500', kleurLicht: 'bg-blue-100', border: 'border-blue-500', text: 'text-blue-700', kanBoeking: true },
+      bramjellie: { naam: 'Bram & Jellie', email: 'bramzvries@gmail.com', kleur: 'bg-emerald-500', kleurLicht: 'bg-emerald-100', border: 'border-emerald-500', text: 'text-emerald-700', kanBoeking: true },
+      frens: { naam: 'Frens', email: 'frensv@gmail.com', kleur: 'bg-amber-500', kleurLicht: 'bg-amber-100', border: 'border-amber-500', text: 'text-amber-700', kanBoeking: true },
+      aaldert: { naam: 'Aaldert', email: 'aaldertvries@gmail.com', kleur: 'bg-purple-500', kleurLicht: 'bg-purple-100', border: 'border-purple-500', text: 'text-purple-700', kanBoeking: true },
+      konstantin: { naam: 'Konstantin', email: 'starojitski@gmail.com', kleur: 'bg-red-500', kleurLicht: 'bg-red-100', border: 'border-red-500', text: 'text-red-700', kanBoeking: false }
     };
 
     // Whitelist van toegestane e-mailadressen
@@ -108,10 +109,6 @@
       error: null,
       success: null,
       toonModal: false,
-      toonChat: false,
-      chatBerichten: [],
-      chatNaam: null,
-      huidigeGebruiker: null,
       huidigeProfielfoto: null,
       huidigeEmail: null,
       ingelogdeBroer: null,
@@ -164,7 +161,6 @@
             }
             
             state.isSignedIn = true;
-            laadOpgeslagenChatNaam();
             await laadReserveringen();
             await laadProfielfotoos();
             render();
@@ -219,7 +215,6 @@
               state.ingelogdeBroer = broerMatch[0];
             }
             
-            laadOpgeslagenChatNaam();
             await laadReserveringen();
             await laadProfielfotoos();
             return;
@@ -571,6 +566,13 @@
     function handleDagKlik(datum) {
       if (!datum || isVerleden(datum) || !state.isSignedIn) return;
       
+      // Check of gebruiker mag boeken
+      const broerInfo = BROERS[state.ingelogdeBroer];
+      if (!broerInfo || !broerInfo.kanBoeking) {
+        showError('⛔ Je hebt alleen-lezen toegang. Vraag een familielid om voor je te reserveren.');
+        return;
+      }
+      
       const reservering = getReserveringVoorDag(datum);
       if (reservering) return;
 
@@ -752,95 +754,6 @@
     function openChat() {
       state.toonChat = true;
       render();
-      scrollChatNaarOnder();
-    }
-
-    function closeChat() {
-      state.toonChat = false;
-      render();
-    }
-
-    function kiesChatNaam(broerKey) {
-      state.chatNaam = broerKey;
-      state.huidigeGebruiker = BROERS[broerKey].naam;
-      localStorage.setItem('chatNaam', broerKey);
-      // Sla profielfoto op voor deze broer
-      slaProfielfotoOp(broerKey);
-      render();
-      startChatListener();
-    }
-
-    function startChatListener() {
-      if (!window.firebaseReady) {
-        setTimeout(startChatListener, 100);
-        return;
-      }
-      
-      const q = window.firebaseQuery(
-        window.firebaseCollection(window.firebaseDB, 'berichten'),
-        window.firebaseOrderBy('timestamp', 'asc'),
-        window.firebaseLimit(100)
-      );
-      
-      window.firebaseOnSnapshot(q, (snapshot) => {
-        state.chatBerichten = [];
-        snapshot.forEach((doc) => {
-          state.chatBerichten.push({ id: doc.id, ...doc.data() });
-        });
-        render();
-        scrollChatNaarOnder();
-      });
-    }
-
-    async function verstuurBericht() {
-      const input = document.getElementById('chat-input');
-      const tekst = input.value.trim();
-      
-      if (!tekst || !state.chatNaam) return;
-      
-      try {
-        await window.firebaseAddDoc(window.firebaseCollection(window.firebaseDB, 'berichten'), {
-          tekst: tekst,
-          afzender: state.chatNaam,
-          afzenderNaam: BROERS[state.chatNaam].naam,
-          timestamp: window.firebaseServerTimestamp()
-        });
-        input.value = '';
-      } catch (error) {
-        console.error('Bericht versturen mislukt:', error);
-        showError('Kon bericht niet versturen');
-      }
-    }
-
-    function handleChatKeyPress(event) {
-      if (event.key === 'Enter') {
-        verstuurBericht();
-      }
-    }
-
-    function scrollChatNaarOnder() {
-      setTimeout(() => {
-        const chatMessages = document.getElementById('chat-messages');
-        if (chatMessages) {
-          chatMessages.scrollTop = chatMessages.scrollHeight;
-        }
-      }, 100);
-    }
-
-    function formatChatTijd(timestamp) {
-      if (!timestamp) return '';
-      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-      return `${date.getDate()} ${MAANDEN[date.getMonth()].substring(0, 3)} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-    }
-
-    // Check voor opgeslagen chatnaam bij opstarten
-    function laadOpgeslagenChatNaam() {
-      const opgeslagen = localStorage.getItem('chatNaam');
-      if (opgeslagen && BROERS[opgeslagen]) {
-        state.chatNaam = opgeslagen;
-        state.huidigeGebruiker = BROERS[opgeslagen].naam;
-        startChatListener();
-      }
     }
 
     // ============================================
@@ -934,11 +847,6 @@
                 </div>
               </div>
               <div class="flex gap-2">
-                <button onclick="openChat()" class="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center hover:bg-blue-200 transition-colors" title="Chat">
-                  <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
-                  </svg>
-                </button>
                 <button onclick="laadReserveringen()" class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center hover:bg-slate-200 transition-colors" title="Ververs">
                   <svg class="w-5 h-5 text-slate-600 ${state.isLoading ? 'loader' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
@@ -1130,85 +1038,6 @@
             <button onclick="closeModal()" class="w-full py-3 rounded-xl bg-slate-100 text-slate-700 font-medium hover:bg-slate-200 transition-colors">
               Annuleren
             </button>
-          </div>
-        </div>
-
-        <!-- Chat Panel -->
-        <div id="chat-panel" class="${state.toonChat ? '' : 'hidden'} fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div class="bg-white rounded-2xl w-full max-w-md h-[80vh] flex flex-col">
-            <!-- Chat Header -->
-            <div class="p-4 border-b flex items-center justify-between">
-              <div class="flex items-center gap-3">
-                <div class="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
-                  <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
-                  </svg>
-                </div>
-                <div>
-                  <h3 class="font-bold text-slate-800">Familie Chat</h3>
-                  ${state.chatNaam ? `<p class="text-sm text-slate-500">Ingelogd als ${BROERS[state.chatNaam].naam}</p>` : ''}
-                </div>
-              </div>
-              <button onclick="closeChat()" class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center hover:bg-slate-200">
-                <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                </svg>
-              </button>
-            </div>
-            
-            ${!state.chatNaam ? `
-              <!-- Kies naam -->
-              <div class="flex-1 p-4 flex flex-col items-center justify-center">
-                <p class="text-slate-600 mb-4">Wie ben jij?</p>
-                <div class="grid grid-cols-2 gap-2 w-full max-w-xs">
-                  ${Object.entries(BROERS).map(([key, broer]) => `
-                    <button onclick="kiesChatNaam('${key}')" class="p-4 rounded-xl border-2 border-slate-200 hover:${broer.kleurLicht} hover:${broer.border} transition-all">
-                      <div class="flex items-center gap-2 justify-center">
-                        ${renderProfielfotoOfKleur(key, 'w-6 h-6')}
-                        <span class="font-medium text-slate-700">${broer.naam}</span>
-                      </div>
-                    </button>
-                  `).join('')}
-                </div>
-              </div>
-            ` : `
-              <!-- Berichten -->
-              <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3">
-                ${state.chatBerichten.length === 0 ? `
-                  <p class="text-center text-slate-400 mt-8">Nog geen berichten. Start het gesprek!</p>
-                ` : state.chatBerichten.map(bericht => {
-                  const isEigen = bericht.afzender === state.chatNaam;
-                  const broer = BROERS[bericht.afzender] || BROERS.anne;
-                  return `
-                    <div class="flex ${isEigen ? 'justify-end' : 'justify-start'}">
-                      <div class="max-w-[80%] ${isEigen ? broer.kleur + ' text-white' : 'bg-slate-100 text-slate-800'} rounded-2xl px-4 py-2">
-                        ${!isEigen ? `<p class="text-xs font-medium ${broer.text} mb-1">${bericht.afzenderNaam}</p>` : ''}
-                        <p>${bericht.tekst}</p>
-                        <p class="text-xs ${isEigen ? 'text-white/70' : 'text-slate-400'} mt-1">${formatChatTijd(bericht.timestamp)}</p>
-                      </div>
-                    </div>
-                  `;
-                }).join('')}
-              </div>
-              
-              <!-- Input -->
-              <div class="p-4 border-t">
-                <div class="flex gap-2">
-                  <input
-                    type="text"
-                    id="chat-input"
-                    onkeypress="handleChatKeyPress(event)"
-                    placeholder="Typ een bericht..."
-                    class="flex-1 px-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
-                  <button onclick="verstuurBericht()" class="px-4 py-3 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            `}
           </div>
         </div>
 
