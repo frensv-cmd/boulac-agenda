@@ -368,8 +368,13 @@
       try {
         const jaar = state.currentDate.getFullYear();
         const maand = state.currentDate.getMonth();
-        const startDatum = new Date(jaar, maand - 1, 1);
-        const eindDatum = new Date(jaar, maand + 4, 0); // 3 maanden vooruit
+        // Correctly calculate range: 1 month back to 4 months forward
+        const startDatum = new Date(jaar, maand, 1);
+        startDatum.setMonth(startDatum.getMonth() - 1); // Safe month subtraction
+        const eindDatum = new Date(jaar, maand, 1);
+        eindDatum.setMonth(eindDatum.getMonth() + 4); // Safe month addition
+
+        console.log(`📅 Laden reserveringen: ${startDatum.toLocaleDateString('nl-NL')} tot ${eindDatum.toLocaleDateString('nl-NL')}`);
 
         const response = await gapi.client.calendar.events.list({
           calendarId: CONFIG.CALENDAR_ID,
@@ -380,7 +385,9 @@
         });
 
         const events = response.result.items || [];
+        console.log(`✅ ${events.length} events gevonden in Google Calendar`);
         state.reserveringen = events.map(event => googleEventNaarReservering(event));
+        console.log(`✅ ${state.reserveringen.length} reserveringen geladen in app`);
         state.error = null;
       } catch (error) {
         console.error('Laden mislukt:', error);
