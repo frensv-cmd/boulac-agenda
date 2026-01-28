@@ -213,6 +213,12 @@
             const broerMatch = getBroerByEmail(state.huidigeEmail);
             if (broerMatch) {
               state.ingelogdeBroer = broerMatch[0];
+              const broer = BROERS[broerMatch[0]];
+              if (broer.kanBoeking) {
+                console.log(`✅ Ingelogd als: ${broer.naam} (kan reserveren)`);
+              } else {
+                console.warn(`🔴 Ingelogd als: ${broer.naam} (ALLEEN-LEZEN MODUS - kan NIET reserveren)`);
+              }
             }
             
             await laadReserveringen();
@@ -423,6 +429,16 @@
       console.log('broerKey:', broerKey);
       console.log('geselecteerdeDagen:', state.geselecteerdeDagen);
       
+      // VEILIGHEID: Double-check of gebruiker mag boeken
+      const broerInfo = BROERS[state.ingelogdeBroer];
+      if (!broerInfo || !broerInfo.kanBoeking) {
+        showError('⛔ FOUT: Je hebt alleen-lezen toegang. Je kunt niet reserveren.');
+        state.toonModal = false;
+        state.isLoading = false;
+        render();
+        return;
+      }
+      
       if (!broerKey || broerKey === 'null' || broerKey === 'undefined') {
         showError('Kon niet bepalen wie je bent. Log opnieuw in.');
         state.toonModal = false;
@@ -594,7 +610,7 @@
       // Check of gebruiker mag boeken
       const broerInfo = BROERS[state.ingelogdeBroer];
       if (!broerInfo || !broerInfo.kanBoeking) {
-        showError('⛔ Je hebt alleen-lezen toegang. Vraag een familielid om voor je te reserveren.');
+        showError(`🔒 Alleen-lezen toegang. Contacteer Anne, Bram, Frens of Aaldert om voor je te reserveren.`);
         return;
       }
       
@@ -868,6 +884,7 @@
                   <p class="text-slate-500 text-sm flex items-center gap-1">
                     <span class="w-2 h-2 bg-green-500 rounded-full"></span>
                     Verbonden met Google
+                    ${!BROERS[state.ingelogdeBroer]?.kanBoeking ? `<span class="ml-2 px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full font-medium">🔒 Alleen-lezen</span>` : ''}
                   </p>
                 </div>
               </div>
@@ -933,11 +950,13 @@
                 const geselecteerd = isGeselecteerd(datum);
                 const verleden = isVerleden(datum);
                 const broerInfo = reservering ? BROERS[reservering.broer] : null;
+                const ingelogdeBroerInfo = BROERS[state.ingelogdeBroer];
+                const kanNietBoeken = !ingelogdeBroerInfo?.kanBoeking;
                 
                 let classes = 'aspect-square rounded-xl text-sm font-medium transition-all flex items-center justify-center cursor-pointer ';
                 
-                if (verleden) {
-                  classes += 'text-slate-300 cursor-not-allowed ';
+                if (verleden || kanNietBoeken) {
+                  classes += 'text-slate-300 cursor-not-allowed opacity-60 ';
                 } else if (geselecteerd) {
                   classes += 'bg-blue-500 text-white ring-2 ring-blue-300 ';
                 } else if (reservering) {
@@ -946,7 +965,7 @@
                   classes += 'hover:bg-slate-100 text-slate-700 ';
                 }
                 
-                return `<button onclick="handleDagKlik(new Date(${datum.getTime()}))" class="${classes}" ${verleden ? 'disabled' : ''}>${datum.getDate()}</button>`;
+                return `<button onclick="handleDagKlik(new Date(${datum.getTime()}))" class="${classes}" ${verleden || kanNietBoeken ? 'disabled' : ''}>${datum.getDate()}</button>`;
               }).join('')}
             </div>
 
